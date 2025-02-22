@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Image Grayscale, Darken &amp; Blur Tool</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+    }
+    .toolbar {
+      margin-bottom: 1rem;
+    }
+    button {
+      padding: 6px 12px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    #fileInput {
+      display: none;
+    }
+    label {
+      margin-right: 0.5rem;
+    }
+    .slider-group {
+      margin-right: 16px;
+    }
+    #imageContainer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+    }
+    .image-block {
+      border: 2px dashed #ccc;
+      padding: 10px;
+      background: #f0f0f0;
+    }
+    canvas {
+      display: block;
+      max-width: 400px;
+      max-height: 300px;
+    }
+  </style>
+  <!-- Include JSZip and FileSaver.js from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+</head>
+<body>
+  <h1>Image Grayscale, Darken &amp; Blur Tool</h1>
+  <div class="toolbar">
+    <button id="addImageBtn">Add Image</button>
+    <input type="file" id="fileInput" accept="image/*" multiple>
+    <span class="slider-group">
+      <label for="darkenSlider">Darken:</label>
+      <input type="range" id="darkenSlider" min="10" max="100" step="10" value="100">
+      <span id="darkenValue">100%</span>
+    </span>
+    <span class="slider-group">
+      <label for="blurSlider">Blur:</label>
+      <input type="range" id="blurSlider" min="0" max="20" step="1" value="0">
+      <span id="blurValue">0px</span>
+    </span>
+    <button id="exportBtn">Export</button>
+  </div>
+  <div id="imageContainer"></div>
+
+  <script>
+    const addImageBtn = document.getElementById('addImageBtn');
+    const fileInput = document.getElementById('fileInput');
+    const darkenSlider = document.getElementById('darkenSlider');
+    const darkenValue = document.getElementById('darkenValue');
+    const blurSlider = document.getElementById('blurSlider');
+    const blurValue = document.getElementById('blurValue');
+    const exportBtn = document.getElementById('exportBtn');
+    const imageContainer = document.getElementById('imageContainer');
+
+    // Store image blocks so we can update them when parameters change.
+    // Each block: { canvas, ctx, img, filename }
+    const imageBlocks = [];
+
+    // Global parameters
+    let darkenFactor = parseFloat(darkenSlider.value) / 100; // 1 means normal brightness
+    let blurAmount = parseInt(blurSlider.value); // in pixels
+
+    function updateDarkenDisplay(value) {
+      darkenValue.innerText = value + '%';
+    }
+    function updateBlurDisplay(value) {
+      blurValue.innerText = value + 'px';
+    }
+
+    function redrawImageBlock(block) {
+      const { ctx, canvas, img } = block;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Apply filters: grayscale, brightness (darken) and blur
+      ctx.filter = `grayscale(100%) brightness(${darkenFactor}) blur(${blurAmount}px)`;
+      // Fit image to canvas
+      const canvasRatio = canvas.width / canvas.height;
+      const imgRatio = img.width / img.height;
+      let drawWidth, drawHeight, offsetX = 0, offsetY = 0;
+      if (canvasRatio > imgRatio) {
+        drawHeight = canvas.height;
+        drawWidth = img.width * (canvas.height / img.height);
+        offsetX = (canvas.width - drawWidth) / 2;
+      } else {
+        drawWidth = canvas.width;
+        drawHeight = img.height * (canvas.width / img.width);
+        offsetY = (canvas.height - drawHeight) / 2;
+      }
+      ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+      ctx.filter = 'none';
+    }
+
+    // Process and add image block, recording the original filename if available.
+    function addImage(file) {
+      if (!file.type.match(/^image\//)) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const img = new Image();
+        img.onload = function() {
+          const blockDiv = document.createElement('div');
+          blockDiv.classList.add('image-block');
+          const canvas = document.createElement('canvas');
+          canvas.width = 400;
+          canvas.height = 300;
+          blockDiv.appendChild(canvas);
+          imageContainer.appendChild(blockDiv);
+          const ctx = canvas.getContext('2d');
+          const block = { canvas, ctx, img, filename: file.name || undefined };
+          imageBlocks.push(block);
+          redrawImageBlock(block);
+        };
+        img.src = evt.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Add images from file input
+    addImageBtn.addEventListener('click', () => {
+      fileInput.value = null;
+      fileInput.click();
+    });
+    
+    fileInput.addEventListener('change', (e) => {
+      const files = e.target.files;
+      if (files) {
+        for (let i = 0; i < files.length; i++) {
+          addImage(files[i]);
+        }
+      }
+    });
+
+    // Handle drag-and-drop and paste events
+    document.addEventListener('dragover', (e) => { e.preventDefault(); });
+    document.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (e.dataTransfer.files) {
+        for (let i = 0; i < e.dataTransfer.files.length; i++) {
+          addImage(e.dataTransfer.files[i]);
+        }
+      }
+    });
+    document.addEventListener('paste', (e) => {
+      if (e.clipboardData && e.clipboardData.items) {
+        for (let i = 0; i < e.clipboardData.items.length; i++) {
+          const item = e.clipboardData.items[i];
+          if (item.type.indexOf('image') !== -1) {
+            const file = item.getAsFile();
+            addImage(file);
+          }
+        }
+      }
+    });
+
+    // Slider to adjust darken parameter
+    darkenSlider.addEventListener('input', (e) => {
+      darkenFactor = parseFloat(e.target.value) / 100;
+      updateDarkenDisplay(e.target.value);
+      imageBlocks.forEach(block => redrawImageBlock(block));
+    });
+
+    // Slider to adjust blur effect
+    blurSlider.addEventListener('input', (e) => {
+      blurAmount = parseInt(e.target.value);
+      updateBlurDisplay(e.target.value);
+      imageBlocks.forEach(block => redrawImageBlock(block));
+    });
+
+    // Initialize displays
+    updateDarkenDisplay(darkenSlider.value);
+    updateBlurDisplay(blurSlider.value);
+
+    // EXPORT button creates a zip file of all canvases preserving file names
+    exportBtn.addEventListener('click', () => {
+      const zip = new JSZip();
+      const promises = [];
+      imageBlocks.forEach((block, index) => {
+        let filename = block.filename || `image${index + 1}.png`;
+        // Ensure they have a .png extension
+        if (!filename.toLowerCase().endsWith('.png')) {
+          filename += '.png';
+        }
+        // Convert canvas to blob and add to zip.
+        const promise = new Promise(resolve => {
+          block.canvas.toBlob(blob => {
+            zip.file(filename, blob);
+            resolve();
+          }, "image/png");
+        });
+        promises.push(promise);
+      });
+      Promise.all(promises).then(() => {
+        zip.generateAsync({ type: "blob" }).then(content => {
+          saveAs(content, "images.zip");
+        });
+      });
+    });
+  </script>
+</body>
+</html>
