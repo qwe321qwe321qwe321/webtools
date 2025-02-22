@@ -2,47 +2,77 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Image Crop Example - Resizable & Zoomable</title>
+  <title>Batch Image Crop Example</title>
   <style>
     body {
       margin: 20px;
       font-family: sans-serif;
     }
 
-    /* Outer container for applying transform: scale(), without changing the actual image size */
-    #scalableWrapper {
-      width: 3840px; /* Actual internal width (unchanged) */
-      height: 2160px; /* Actual internal height (unchanged) */
-      transform-origin: top left;
-      /* Default: no scaling. JS will set transform: scale(...) */
+    .toolbar {
+      margin-bottom: 1rem;
     }
 
-    /* Main container & canvas */
-    #canvasContainer {
-      position: relative;
-      width: 3840px;  /* True canvas width (unchanged) */
-      height: 2160px; /* True canvas height (unchanged) */
-      border: 2px dashed #ccc;
-      margin-bottom: 10px;
-      overflow: hidden;
-      background: #f0f0f0;
+    button {
+      padding: 6px 12px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-right: 8px;
     }
-    #mainCanvas {
+
+    label {
+      margin-right: 0.5rem;
+    }
+
+    #zoomSlider {
+      width: 200px;
+      vertical-align: middle;
+    }
+
+    #fileInput {
+      display: none; /* hidden file input */
+    }
+
+    /* Container for all image blocks */
+    #imageBlocks {
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+
+    /* Each image block container */
+    .image-block {
+      border: 2px dashed #ccc;
+      position: relative;
+      width: 3840px;
+      height: 2160px;
+      background: #f0f0f0;
+      overflow: hidden;
+      transform-origin: top left;
+    }
+
+    .block-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    canvas {
       display: block;
       width: 100%;
       height: 100%;
     }
 
-    /* Crop frame */
+    /* Crop frame styling */
     .cropFrame {
       position: absolute;
-      border: 2px dashed #ff0000;
+      border: 2px dashed #f00;
       box-sizing: border-box;
       cursor: move;
       user-select: none;
     }
 
-    /* Resizing handle for the crop frame (only bottom-right corner in this example) */
+    /* Resizing handle (bottom-right only) */
     .resizer {
       position: absolute;
       width: 14px;
@@ -53,265 +83,381 @@
       cursor: se-resize;
     }
 
-    /* Two crop frames by default */
-    #cropFrame1 {
-      width: 864px;
-      height: 1040px;
-      top: 0;
-      left: 0;
-    }
-    #cropFrame2 {
-      width: 944px;
-      height: 332px;
-      top: 0;
-      left: 880px;
+    .controls-container {
+      margin-bottom: 1rem;
     }
 
-    /* Toolbar, buttons & range slider */
-    .toolbar {
-      margin-bottom: 10px;
-    }
-    button {
-      padding: 6px 12px;
-      font-size: 16px;
-      cursor: pointer;
-      margin-right: 8px;
-    }
-    /* Range slider */
-    #zoomSlider {
-      width: 200px;
-      vertical-align: middle;
-    }
-
-    /* Hide input[type="file"] */
-    #fileInput {
-      display: none;
-    }
   </style>
+  <!-- JSZip for packaging multiple files into a single ZIP -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <!-- FileSaver to save the ZIP in older browsers (necessary for some) -->
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+  <!-- UPNG.js from Photopea's GitHub for pure JS PNG encoding -->
+  <script src="https://cdn.jsdelivr.net/gh/photopea/UPNG.js/UPNG.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js" integrity="sha512-g2TeAWw5GPnX7z0Kn8nFbYfeHcvAu/tx6d6mrLe/90mkCxO+RcptyYpksUz35EO337F83bZwcmUyHiHamspkfg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 <body>
-<h2>Image Crop Example (Resize the Crop Frames, Maintain Aspect Ratio, Zoom the View)</h2>
-<p>You can <strong>drag & drop an image</strong> onto the gray area below, or use <strong>Ctrl+V</strong> to paste from the clipboard.<br>
-This example supports using the <strong>Slider</strong> to zoom the view, without affecting the final output image size.</p>
+
+<h1>Batch Image Crop Example</h1>
+<p>
+  You can add multiple images below for batch editing. Each image is displayed in a <strong>3840x2160</strong> space.
+  You can drag/paste or select multiple times. Each image will have 2 crop frames.
+</p>
 
 <div class="toolbar">
-  <!-- 1. Open file dialog button -->
-  <button id="openFileBtn">Select Image</button>
-  <input type="file" id="fileInput" accept="image/*">
+  <button id="addImageBtn">Add Image</button>
+  <input type="file" id="fileInput" accept="image/*" multiple>
 
-  <!-- 2. CUT button -->
-  <button id="cutBtn">CUT</button>
+  <button id="cutBtn">CUT (Export All)</button>
 
-  <!-- 3. Zoom slider -->
   <label for="zoomSlider">Zoom:</label>
-  <input type="range" id="zoomSlider" min="10" max="200" step="10" value="25">
-  <span id="zoomValue">25%</span>
+  <input type="range" id="zoomSlider" min="10" max="200" step="10" value="60">
+  <span id="zoomValue">60%</span>
+
+  <label style="margin-left: 16px;">Color Depth:</label>
+  <select id="colorDepthSelect">
+    <option value="24" selected>24-bit</option>
+    <option value="32">32-bit</option>
+  </select>
 </div>
 
-<!-- Wrap everything in an outer layer that uses transform: scale() to zoom the entire screen -->
-<div id="scalableWrapper">
-  <!-- Container with the canvas and two crop frames -->
-  <div id="canvasContainer">
-    <canvas id="mainCanvas" width="3840" height="2160"></canvas>
-
-    <!-- Crop frame 1 -->
-    <div id="cropFrame1" class="cropFrame" data-ratio="0.8307692307" data-target-width="864" data-target-height="1040" style="left:0px; top:0px; width:864px; height:1040px;">
-      <div class="resizer"></div>
-    </div>
-
-    <!-- Crop frame 2 -->
-    <div id="cropFrame2" class="cropFrame" data-ratio="2.8433734939" data-target-width="944" data-target-height="332" style="left:880px; top:0px; width:944px; height:332px;">
-      <div class="resizer"></div>
-    </div>
-  </div>
-</div>
+<div id="imageBlocks"></div>
 
 <script>
-  //======================
-  // 0. Initial Variables
-  //======================
-  const mainCanvas = document.getElementById('mainCanvas');
-  const ctx = mainCanvas.getContext('2d');
+////////////////////////////////////////////////////////////////////////////////
+// Global Variables and Setup
+////////////////////////////////////////////////////////////////////////////////
 
-  const canvasContainer = document.getElementById('canvasContainer');
-  const cutBtn = document.getElementById('cutBtn');
-  const openFileBtn = document.getElementById('openFileBtn');
-  const fileInput = document.getElementById('fileInput');
+const imageBlocksContainer = document.getElementById('imageBlocks');
+const addImageBtn = document.getElementById('addImageBtn');
+const fileInput = document.getElementById('fileInput');
+const cutBtn = document.getElementById('cutBtn');
 
-  const scalableWrapper = document.getElementById('scalableWrapper');
-  const zoomSlider = document.getElementById('zoomSlider');
-  const zoomValue = document.getElementById('zoomValue');
+const zoomSlider = document.getElementById('zoomSlider');
+const zoomValue = document.getElementById('zoomValue');
 
-  const cropFrame1 = document.getElementById('cropFrame1');
-  const cropFrame2 = document.getElementById('cropFrame2');
+const colorDepthSelect = document.getElementById('colorDepthSelect');
 
-  // Actual dimensions
-  const CANVAS_WIDTH = 3840;
-  const CANVAS_HEIGHT = 2160;
+// Each image block is 3840 x 2160 in actual size.
+const CANVAS_WIDTH = 3840;
+const CANVAS_HEIGHT = 2160;
 
-  // Store the current scale (1 = 100%)
-  let currentScale = parseFloat(zoomSlider.value) / 100;
+// We'll store references to all image blocks in this array.
+// Each block has: { container, canvas, ctx, frames: [...], scale }
+let allBlocks = [];
 
-  // By default, clear the canvas
-  ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+// Default scale (for display only; does not affect final output)
+let globalScale = parseFloat(zoomSlider.value) / 100;
 
-  // Listen to zoomSlider
-  function updateScaleDisplay(scale) {
-    zoomValue.innerText = Math.round(scale * 100) + '%';
-  }
+////////////////////////////////////////////////////////////////////////////////
+// Zoom Management (applies to all image blocks)
+////////////////////////////////////////////////////////////////////////////////
 
-  function setScale(scale) {
-    currentScale = scale;
-    scalableWrapper.style.transform = `scale(${currentScale})`;
-    updateScaleDisplay(currentScale);
-  }
+function updateZoomDisplay(scale) {
+  zoomValue.innerText = Math.round(scale * 100) + '%';
+}
 
-  zoomSlider.addEventListener('input', (e) => {
-    const scale = parseFloat(e.target.value) / 100;
-    setScale(scale);
+function setGlobalScale(scale) {
+  globalScale = scale;
+  allBlocks.forEach(block => {
+    block.container.style.transform = `scale(${globalScale})`;
+    const value = block.container.clientHeight * (globalScale - 1.0);
+    console.log(value);
+    block.container.style.marginBottom =  `${value}px`;
   });
+  updateZoomDisplay(globalScale);
+}
 
-  // Initialize with default value
-  setScale(currentScale);
+zoomSlider.addEventListener('input', (e) => {
+  const scale = parseFloat(e.target.value) / 100;
+  setGlobalScale(scale);
+});
 
-  //======================
-  // 1. Load & draw image on canvas
-  //======================
-  function drawImageToCanvas(image) {
-    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+// Initialize the default scale
+setGlobalScale(globalScale);
 
-    const imgWidth = image.width;
-    const imgHeight = image.height;
-    const imgRatio = imgWidth / imgHeight;
-    const canvasRatio = CANVAS_WIDTH / CANVAS_HEIGHT;
+////////////////////////////////////////////////////////////////////////////////
+// Add / Import Images
+////////////////////////////////////////////////////////////////////////////////
 
-    let drawWidth, drawHeight, offsetX, offsetY;
-    if (imgRatio > canvasRatio) {
-      // Image is relatively wider
-      drawWidth = CANVAS_WIDTH;
-      drawHeight = CANVAS_WIDTH / imgRatio;
-      offsetX = 0;
-      offsetY = (CANVAS_HEIGHT - drawHeight) / 2;
-    } else {
-      // Image is relatively taller
-      drawHeight = CANVAS_HEIGHT;
-      drawWidth = CANVAS_HEIGHT * imgRatio;
-      offsetX = (CANVAS_WIDTH - drawWidth) / 2;
-      offsetY = 0;
-    }
+// 1) User clicks "Add Image" button => triggers file input
+addImageBtn.addEventListener('click', () => {
+  fileInput.value = null; // reset
+  fileInput.click();
+});
 
-    ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
-  }
+// 2) Once files are chosen, create blocks for each selected file
+fileInput.addEventListener('change', (e) => {
+  const files = e.target.files;
+  if (!files || files.length === 0) return;
 
-  //======================
-  // Drag & drop file
-  //======================
-  canvasContainer.addEventListener('dragover', (e) => e.preventDefault());
-  canvasContainer.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.match(/^image\//)) {
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (file.type.match(/^image\//)) {
       const reader = new FileReader();
       reader.onload = function(evt) {
         const img = new Image();
         img.onload = function() {
-          drawImageToCanvas(img);
+          createImageBlock(img, file.name);
         };
         img.src = evt.target.result;
       };
       reader.readAsDataURL(file);
     }
-  });
+  }
+});
 
-  //======================
-  // Clipboard paste
-  //======================
-  document.addEventListener('paste', (e) => {
-    const items = e.clipboardData.items;
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.type.indexOf('image') !== -1) {
-        const file = item.getAsFile();
-        const reader = new FileReader();
-        reader.onload = function(evt) {
-          const img = new Image();
-          img.onload = function() {
-            drawImageToCanvas(img);
-          };
-          img.src = evt.target.result;
-        };
-        reader.readAsDataURL(file);
-      }
-    }
-  });
+// 3) Also allow drag/paste globally => create blocks
+// We'll do on document-level
 
-  //======================
-  // Select file
-  //======================
-  openFileBtn.addEventListener('click', () => {
-    fileInput.value = null; // reset
-    fileInput.click();
-  });
-  fileInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file && file.type.match(/^image\//)) {
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+});
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  if (!e.dataTransfer.files) return;
+  const files = e.dataTransfer.files;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (file.type.match(/^image\//)) {
       const reader = new FileReader();
       reader.onload = function(evt) {
         const img = new Image();
         img.onload = function() {
-          drawImageToCanvas(img);
+          createImageBlock(img, file.name);
         };
         img.src = evt.target.result;
       };
       reader.readAsDataURL(file);
     }
+  }
+});
+
+document.addEventListener('paste', (e) => {
+  const items = e.clipboardData.items;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.type.indexOf('image') !== -1) {
+      const file = item.getAsFile();
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const img = new Image();
+        img.onload = function() {
+          createImageBlock(img, file.name);
+        };
+        img.src = evt.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+});
+
+////////////////////////////////////////////////////////////////////////////////
+// Helper Function to Draw Image to Canvas
+////////////////////////////////////////////////////////////////////////////////
+
+function drawImageToCanvas(ctx, img) {
+  const canvas = ctx.canvas;
+  const canvasAspect = canvas.width / canvas.height;
+  const imgAspect = img.width / img.height;
+
+  let drawWidth, drawHeight;
+  let offsetX = 0, offsetY = 0;
+
+  if (canvasAspect > imgAspect) {
+    // Canvas is wider than image
+    drawHeight = canvas.height;
+    drawWidth = img.width * (canvas.height / img.height);
+    offsetX = (canvas.width - drawWidth) / 2;
+  } else {
+    // Canvas is taller than image
+    drawWidth = canvas.width;
+    drawHeight = img.height * (canvas.width / img.width);
+    offsetY = (canvas.height - drawHeight) / 2;
+  }
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Creating a Crop Frame
+////////////////////////////////////////////////////////////////////////////////
+
+function createCropFrame(width, height) {
+  const frame = document.createElement('div');
+  frame.classList.add('cropFrame');
+  frame.style.width = width + 'px';
+  frame.style.height = height + 'px';
+  frame.dataset.targetWidth = width;
+  frame.dataset.targetHeight = height;
+  frame.dataset.ratio = width / height;
+
+  const resizer = document.createElement('div');
+  resizer.classList.add('resizer');
+  frame.appendChild(resizer);
+
+  return frame;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Creating an Image Block
+////////////////////////////////////////////////////////////////////////////////
+
+function createImageBlock(img, filename = '') {
+  // Container for this block
+  const blockContainer = document.createElement('div');
+  blockContainer.classList.add('image-block');
+  blockContainer.style.width = CANVAS_WIDTH + 'px';
+  blockContainer.style.height = CANVAS_HEIGHT + 'px';
+  blockContainer.style.transform = `scale(${globalScale})`;
+
+  // Canvas
+  const canvas = document.createElement('canvas');
+  canvas.width = CANVAS_WIDTH;
+  canvas.height = CANVAS_HEIGHT;
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+
+  // Filename input
+  const filenameInput = document.createElement('input');
+  filenameInput.type = 'text';
+  filenameInput.placeholder = 'Enter filename';
+  filenameInput.classList.add('filename-input');
+  if (filename) {
+    filenameInput.value = filename;
+  }
+
+  // Remove button
+  const removeButton = document.createElement('button');
+  removeButton.innerText = 'Remove';
+  removeButton.classList.add('remove-button');
+  removeButton.addEventListener('click', () => {
+    blockContainer.remove();
+    allBlocks = allBlocks.filter(block => block.container !== blockContainer);
   });
 
-  //======================
-  // 2. Crop frame - moving
-  //======================
-  let activeCropFrame = null;
+  // Add elements to controls container
+  const controlsContainer = document.createElement('div');
+  controlsContainer.classList.add('controls-container');
+  controlsContainer.appendChild(filenameInput);
+  controlsContainer.appendChild(removeButton);
+
+  // Add 2 frames
+  const frame1 = createCropFrame(864, 1040); // default ratio 864/1040
+  blockContainer.appendChild(frame1);
+
+  const frame2 = createCropFrame(944, 332); // default ratio 944/332
+  frame2.style.left = '880px';
+  blockContainer.appendChild(frame2);
+  
+  // Add elements to block container
+  blockContainer.appendChild(canvas);
+
+  // Append block container and controls container to image blocks container
+  const blockWrapper = document.createElement('div');
+  blockWrapper.classList.add('block-wrapper');
+  blockWrapper.appendChild(controlsContainer);
+  blockWrapper.appendChild(blockContainer);
+
+  imageBlocksContainer.appendChild(blockWrapper);
+
+  // Setup context, draw image with letterbox fill
+  const ctx = canvas.getContext('2d');
+  drawImageToCanvas(ctx, img);
+
+  // Keep references
+  const frames = [frame1, frame2];
+
+  // Add to global array
+  const block = {
+    container: blockContainer,
+    canvas,
+    ctx,
+    frames,
+    filenameInput
+  };
+  allBlocks.push(block);
+
+  // We also need to wire up drag/move/resizing for frames
+  setupFrameInteractions(block);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Frame Interactions (move + resize)
+////////////////////////////////////////////////////////////////////////////////
+
+function setupFrameInteractions(block) {
+  // We'll attach mousedown/move/up at the document level
+
+  let isDraggingFrame = false;
+  let activeFrame = null;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
-  let isDraggingFrame = false;
 
-  // Get the mouse coordinates in the 1:1 space (3840x2160)
+  let isResizing = false;
+  let activeResizer = null;
+  let activeResizeFrame = null;
+  let resizeStartX = 0;
+  let resizeStartY = 0;
+  let frameStartWidth = 0;
+  let frameStartHeight = 0;
+
+  // The block container is the reference for bounding, but the top/left is always 0
+  const containerRect = block.container.getBoundingClientRect();
+
+  // Helper: get real coords in the block's scale=1 space
   function getRealCoord(e) {
-    const rect = canvasContainer.getBoundingClientRect();
-    // rect.left, rect.top is the container's position on screen
-    // We need to divide by currentScale to revert to the 1:1 coordinate system
-    const x = (e.clientX - rect.left) / currentScale;
-    const y = (e.clientY - rect.top) / currentScale;
+    const rect = block.container.getBoundingClientRect();
+    const scale = globalScale;
+    const x = (e.clientX - rect.left) / scale;
+    const y = (e.clientY - rect.top) / scale;
     return { x, y };
   }
 
-  function onMouseDown(e) {
-    // If clicking on the resizer, do not move
-    if (e.target.classList.contains('resizer')) return;
+  // Mousedown
+  block.container.addEventListener('mousedown', (e) => {
+    if (e.target.classList.contains('resizer')) {
+      // start resizing
+      isResizing = true;
+      activeResizer = e.target;
+      activeResizeFrame = e.target.parentElement;
+
+      // record initial coords
+      const realPos = getRealCoord(e);
+      resizeStartX = realPos.x;
+      resizeStartY = realPos.y;
+
+      // current frame size
+      frameStartWidth = parseFloat(activeResizeFrame.style.width);
+      frameStartHeight = parseFloat(activeResizeFrame.style.height);
+
+      e.stopPropagation();
+      return;
+    }
 
     if (e.target.classList.contains('cropFrame')) {
-      activeCropFrame = e.target;
       isDraggingFrame = true;
+      activeFrame = e.target;
       const realPos = getRealCoord(e);
-      // Current frame's left & top in 1:1 space
-      const frameLeft = parseFloat(activeCropFrame.style.left) || 0;
-      const frameTop = parseFloat(activeCropFrame.style.top) || 0;
-      // Calculate offset between mouse and frame top-left
+      const frameLeft = parseFloat(activeFrame.style.left) || 0;
+      const frameTop = parseFloat(activeFrame.style.top) || 0;
       dragOffsetX = realPos.x - frameLeft;
       dragOffsetY = realPos.y - frameTop;
     }
-  }
+  });
 
-  function onMouseMove(e) {
-    if (isDraggingFrame && activeCropFrame) {
+  // Mousemove
+  document.addEventListener('mousemove', (e) => {
+    if (isDraggingFrame && activeFrame) {
       const realPos = getRealCoord(e);
       let newLeft = realPos.x - dragOffsetX;
       let newTop = realPos.y - dragOffsetY;
 
-      // Boundary check (in 1:1 space)
-      const frameWidth = parseFloat(activeCropFrame.style.width);
-      const frameHeight = parseFloat(activeCropFrame.style.height);
+      const frameWidth = parseFloat(activeFrame.style.width);
+      const frameHeight = parseFloat(activeFrame.style.height);
 
+      // boundary checks
       if (newLeft < 0) newLeft = 0;
       if (newTop < 0) newTop = 0;
       if (newLeft + frameWidth > CANVAS_WIDTH) {
@@ -321,178 +467,192 @@ This example supports using the <strong>Slider</strong> to zoom the view, withou
         newTop = CANVAS_HEIGHT - frameHeight;
       }
 
-      activeCropFrame.style.left = newLeft + 'px';
-      activeCropFrame.style.top = newTop + 'px';
-    } else if (isResizing && activeResizer && activeResizeFrame) {
-      handleResizing(e);
-    }
-  }
+      activeFrame.style.left = newLeft + 'px';
+      activeFrame.style.top = newTop + 'px';
 
-  function onMouseUp(e) {
+    } else if (isResizing && activeResizeFrame) {
+      const realPos = getRealCoord(e);
+      const deltaX = realPos.x - resizeStartX;
+
+      let ratio = parseFloat(activeResizeFrame.dataset.ratio);
+      let newWidth = frameStartWidth + deltaX;
+      let newHeight = newWidth / ratio;
+
+      // boundary checks
+      const frameLeft = parseFloat(activeResizeFrame.style.left) || 0;
+      const frameTop = parseFloat(activeResizeFrame.style.top) || 0;
+
+      if (newWidth < 20) {
+        newWidth = 20;
+        newHeight = newWidth / ratio;
+      }
+      if (newHeight < 20) {
+        newHeight = 20;
+        newWidth = newHeight * ratio;
+      }
+
+      if (frameLeft + newWidth > CANVAS_WIDTH) {
+        newWidth = CANVAS_WIDTH - frameLeft;
+        newHeight = newWidth / ratio;
+      }
+      if (frameTop + newHeight > CANVAS_HEIGHT) {
+        newHeight = CANVAS_HEIGHT - frameTop;
+        newWidth = newHeight * ratio;
+      }
+
+      activeResizeFrame.style.width = newWidth + 'px';
+      activeResizeFrame.style.height = newHeight + 'px';
+    }
+  });
+
+  // Mouseup
+  document.addEventListener('mouseup', (e) => {
     isDraggingFrame = false;
-    activeCropFrame = null;
+    activeFrame = null;
 
     if (isResizing) {
       isResizing = false;
       activeResizer = null;
       activeResizeFrame = null;
     }
-  }
-
-  document.addEventListener('mousedown', onMouseDown);
-  document.addEventListener('mousemove', onMouseMove);
-  document.addEventListener('mouseup', onMouseUp);
-
-  //======================
-  // 3. Crop frame - resizing (maintain aspect ratio)
-  //======================
-  let isResizing = false;
-  let activeResizer = null;
-  let activeResizeFrame = null;
-  let resizeStartX = 0;
-  let resizeStartY = 0;
-  let frameStartWidth = 0;
-  let frameStartHeight = 0;
-
-  function getFrameRealSize(frameEl) {
-    return {
-      left: parseFloat(frameEl.style.left) || 0,
-      top: parseFloat(frameEl.style.top) || 0,
-      width: parseFloat(frameEl.style.width) || frameEl.offsetWidth,
-      height: parseFloat(frameEl.style.height) || frameEl.offsetHeight
-    };
-  }
-
-  document.querySelectorAll('.resizer').forEach(resizer => {
-    resizer.addEventListener('mousedown', function(e) {
-      e.stopPropagation(); // prevent moving the frame
-      isResizing = true;
-      activeResizer = e.target;
-      activeResizeFrame = e.target.parentElement;
-
-      // Record initial mouse position in 1:1 space
-      const realPos = getRealCoord(e);
-      resizeStartX = realPos.x;
-      resizeStartY = realPos.y;
-
-      // Current frame size
-      const fs = getFrameRealSize(activeResizeFrame);
-      frameStartWidth = fs.width;
-      frameStartHeight = fs.height;
-    });
   });
+}
 
-  function handleResizing(e) {
-    if (!isResizing || !activeResizeFrame) return;
+function flattenAndEncode24Bit(canvas) {
+    const w = canvas.width;
+    const h = canvas.height;
 
-    // Get current mouse position in 1:1 space
-    const realPos = getRealCoord(e);
+    // 建立無透明度的 Canvas 來合成白色背景
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = w;
+    tempCanvas.height = h;
+    const tempCtx = tempCanvas.getContext('2d', { alpha: false });
 
-    // Mouse movement differences
-    const deltaX = realPos.x - resizeStartX;
-    const deltaY = realPos.y - resizeStartY; // If needed, factor in deltaY
+    // 填充白色背景
+    tempCtx.fillStyle = '#ffffff';
+    tempCtx.fillRect(0, 0, w, h);
 
-    // The frame's aspect ratio
-    let ratio = parseFloat(activeResizeFrame.dataset.ratio);
+    // 畫上原始圖片
+    tempCtx.drawImage(canvas, 0, 0);
 
-    // Tentatively calculate new width
-    let newWidth = frameStartWidth + deltaX;
-    let newHeight = newWidth / ratio;
+    // 取得 RGB 資料（去掉 Alpha 通道）
+    const imgData = tempCtx.getImageData(0, 0, w, h);
+    const rgba = imgData.data;
+    const rgbaData = new Uint8Array(w * h * 4); // 必須是 RGBA，否則 UPNG.encode 會出錯
 
-    // Boundary checks
-    const frameLeft = parseFloat(activeResizeFrame.style.left) || 0;
-    const frameTop = parseFloat(activeResizeFrame.style.top) || 0;
-
-    if (newWidth < 20) {
-      newWidth = 20;
-      newHeight = newWidth / ratio;
-    }
-    if (newHeight < 20) {
-      newHeight = 20;
-      newWidth = newHeight * ratio;
-    }
-
-    if (frameLeft + newWidth > CANVAS_WIDTH) {
-      newWidth = CANVAS_WIDTH - frameLeft;
-      newHeight = newWidth / ratio;
-    }
-    if (frameTop + newHeight > CANVAS_HEIGHT) {
-      newHeight = CANVAS_HEIGHT - frameTop;
-      newWidth = newHeight * ratio;
+    for (let i = 0, j = 0; i < rgba.length; i += 4, j += 4) {
+      rgbaData[j] = rgba[i];     // R
+      rgbaData[j + 1] = rgba[i + 1]; // G
+      rgbaData[j + 2] = rgba[i + 2]; // B
+      rgbaData[j + 3] = 255; // Alpha 強制設為 255（完全不透明）
     }
 
-    activeResizeFrame.style.width = newWidth + 'px';
-    activeResizeFrame.style.height = newHeight + 'px';
+    // 修正 UPNG.encode 使用方式（確保提供 RGBA 數據）
+    const pngArrayBuffer = UPNG.encode([rgbaData], w, h, 0); // Color depth 設為 0，讓 UPNG 自動處理
+
+    return `data:image/png;base64,${arrayBufferToBase64(pngArrayBuffer)}`;
+}
+
+// 修正 arrayBufferToBase64，避免 Maximum call stack size exceeded
+function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 1024) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 1024)); // 分段處理
+    }
+    return btoa(binary);
+}
+
+
+function getSelectedColorDepth() {
+  return colorDepthSelect.value; // '24' or '32'
+}
+
+function getDataURL24Bit(canvas) {
+  return flattenAndEncode24Bit(canvas);
+}
+
+function getDataURL32Bit(canvas) {
+  // normal toDataURL, may have alpha
+  return canvas.toDataURL('image/png');
+}
+
+function getCanvasPNG(canvas) {
+  // returns base64 data url based on user selection
+  const depth = getSelectedColorDepth();
+  if (depth === '24') {
+    return getDataURL24Bit(canvas);
+  } else {
+    return getDataURL32Bit(canvas);
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CUT (Export All) => Download ZIP
+////////////////////////////////////////////////////////////////////////////////
+
+cutBtn.addEventListener('click', async () => {
+  if (allBlocks.length === 0) {
+    alert('No images to export!');
+    return;
   }
 
-  //======================
-  // 4. CUT: Output three images
-  //======================
-  cutBtn.addEventListener('click', () => {
-    // Ask for filename prefix
-    let prefix = prompt("Enter filename prefix (leave blank if none)", "");
-    if (prefix === null) {
-      prefix = ""; // If user clicks Cancel, use empty string
+  // create a zip
+  const zip = new JSZip();
+
+  // For each block, we export main + 2 frames
+  for (let i = 0; i < allBlocks.length; i++) {
+    const block = allBlocks[i];
+    const index = i + 1; // for naming
+
+    // 1) main canvas
+    const mainDataURL = getCanvasPNG(block.canvas);
+    // rename e.g. block1_main_3840x2160.png
+    let mainFilename = block.filenameInput.value || `block${index}.png`;
+    zip.file(mainFilename, mainDataURL.split(',')[1], {base64: true});
+
+    // frames
+    for (let j = 0; j < block.frames.length; j++) {
+      const frameEl = block.frames[j];
+
+      const frameLeft = parseFloat(frameEl.style.left) || 0;
+      const frameTop = parseFloat(frameEl.style.top) || 0;
+      const frameWidth = parseFloat(frameEl.style.width) || frameEl.offsetWidth;
+      const frameHeight = parseFloat(frameEl.style.height) || frameEl.offsetHeight;
+      const targetWidth = parseFloat(frameEl.dataset.targetWidth);
+      const targetHeight = parseFloat(frameEl.dataset.targetHeight);
+
+      // offscreen canvas
+      const offCanvas = document.createElement('canvas');
+      offCanvas.width = targetWidth;
+      offCanvas.height = targetHeight;
+      const offCtx = offCanvas.getContext('2d');
+      offCtx.drawImage(
+        block.canvas,
+        frameLeft,
+        frameTop,
+        frameWidth,
+        frameHeight,
+        0,
+        0,
+        targetWidth,
+        targetHeight
+      );
+
+      const frameDataURL = getCanvasPNG(offCanvas);
+      // e.g. block1_crop_864x1040.png
+      let frameFilename = mainFilename.replace('.png', '') + `_crop_${targetWidth}x${targetHeight}.png`;
+      zip.file(frameFilename, frameDataURL.split(',')[1], {base64: true});
     }
-
-    // (A) Download entire main canvas
-    downloadCanvasAsImage(mainCanvas, prefix + '_3840x2160.png');
-
-    // (B) Download crop frame 1
-    cropAndDownload(cropFrame1, prefix);
-
-    // (C) Download crop frame 2
-    cropAndDownload(cropFrame2, prefix);
-  });
-
-  function cropAndDownload(cropFrameEl, prefix) {
-    // Calculate the crop frame's position & size in 1:1 space
-    const frameLeft = parseFloat(cropFrameEl.style.left) || 0;
-    const frameTop = parseFloat(cropFrameEl.style.top) || 0;
-    const frameWidth = parseFloat(cropFrameEl.style.width) || cropFrameEl.offsetWidth;
-    const frameHeight = parseFloat(cropFrameEl.style.height) || cropFrameEl.offsetHeight;
-
-    // Target output dimension
-    const targetWidth = parseFloat(cropFrameEl.dataset.targetWidth);
-    const targetHeight = parseFloat(cropFrameEl.dataset.targetHeight);
-
-    // Create an offscreen canvas for the cropped area
-    const offCanvas = document.createElement('canvas');
-    offCanvas.width = targetWidth;
-    offCanvas.height = targetHeight;
-    const offCtx = offCanvas.getContext('2d');
-
-    // drawImage(source, sx, sy, sw, sh, dx, dy, dw, dh)
-    offCtx.drawImage(
-      mainCanvas,
-      frameLeft,
-      frameTop,
-      frameWidth,
-      frameHeight,
-      0,
-      0,
-      targetWidth,
-      targetHeight
-    );
-
-    const filename = prefix + `crop_${targetWidth}x${targetHeight}.png`;
-    const dataURL = offCanvas.toDataURL('image/png');
-    downloadDataURL(dataURL, filename);
   }
 
-  function downloadCanvasAsImage(canvas, filename) {
-    const dataURL = canvas.toDataURL('image/png');
-    downloadDataURL(dataURL, filename);
-  }
+  // generate zip
+  const zipBlob = await zip.generateAsync({type: 'blob'});
 
-  function downloadDataURL(dataURL, filename) {
-    const a = document.createElement('a');
-    a.href = dataURL;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
+  // download
+  const zipFilename = 'batch_export.zip';
+  saveAs(zipBlob, zipFilename);
+});
 </script>
 </body>
 </html>
