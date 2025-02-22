@@ -38,8 +38,6 @@
     }
     canvas {
       display: block;
-      max-width: 400px;
-      max-height: 300px;
     }
   </style>
   <!-- Include JSZip and FileSaver.js from CDN -->
@@ -53,7 +51,7 @@
     <input type="file" id="fileInput" accept="image/*" multiple>
     <span class="slider-group">
       <label for="darkenSlider">Darken:</label>
-      <input type="range" id="darkenSlider" min="10" max="100" step="10" value="100">
+      <input type="range" id="darkenSlider" min="0" max="100" step="1" value="100">
       <span id="darkenValue">100%</span>
     </span>
     <span class="slider-group">
@@ -79,8 +77,7 @@
     // Each block: { canvas, ctx, img, filename }
     const imageBlocks = [];
 
-    // Global parameters
-    let darkenFactor = parseFloat(darkenSlider.value) / 100; // 1 means normal brightness
+    // Global parameter for blur amount
     let blurAmount = parseInt(blurSlider.value); // in pixels
 
     function updateDarkenDisplay(value) {
@@ -92,23 +89,36 @@
 
     function redrawImageBlock(block) {
       const { ctx, canvas, img } = block;
+      // Set canvas dimensions to match the image's natural dimensions
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      // Apply filters: grayscale, brightness (darken) and blur
-      ctx.filter = `grayscale(100%) brightness(${darkenFactor}) blur(${blurAmount}px)`;
-      // Fit image to canvas
-      const canvasRatio = canvas.width / canvas.height;
-      const imgRatio = img.width / img.height;
-      let drawWidth, drawHeight, offsetX = 0, offsetY = 0;
-      if (canvasRatio > imgRatio) {
-        drawHeight = canvas.height;
-        drawWidth = img.width * (canvas.height / img.height);
-        offsetX = (canvas.width - drawWidth) / 2;
-      } else {
-        drawWidth = canvas.width;
-        drawHeight = img.height * (canvas.width / img.width);
-        offsetY = (canvas.height - drawHeight) / 2;
-      }
-      ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+      
+      // Create an offscreen canvas to apply grayscale and darken blend first.
+      const offCanvas = document.createElement('canvas');
+      offCanvas.width = canvas.width;
+      offCanvas.height = canvas.height;
+      const offCtx = offCanvas.getContext('2d');
+      
+      // Draw the grayscale image on the offscreen canvas
+      offCtx.filter = "grayscale(100%)";
+      offCtx.drawImage(img, 0, 0, offCanvas.width, offCanvas.height);
+      offCtx.filter = "none";
+      
+      // Compute the darken target:
+      // Map the slider value (0-100) to a gray level (0 => black, 100 => white)
+      let target = Math.round(parseFloat(darkenSlider.value) / 100 * 255);
+      let grayColor = `rgb(${target},${target},${target})`;
+      
+      // Apply darken blend: for each pixel, result = min(src, grayColor)
+      offCtx.globalCompositeOperation = 'darken';
+      offCtx.fillStyle = grayColor;
+      offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+      offCtx.globalCompositeOperation = 'source-over';
+      
+      // Now, on the main canvas, apply the blur effect as the final step.
+      ctx.filter = `blur(${blurAmount}px)`;
+      ctx.drawImage(offCanvas, 0, 0);
       ctx.filter = 'none';
     }
 
@@ -122,8 +132,6 @@
           const blockDiv = document.createElement('div');
           blockDiv.classList.add('image-block');
           const canvas = document.createElement('canvas');
-          canvas.width = 400;
-          canvas.height = 300;
           blockDiv.appendChild(canvas);
           imageContainer.appendChild(blockDiv);
           const ctx = canvas.getContext('2d');
@@ -156,14 +164,14 @@
     document.addEventListener('drop', (e) => {
       e.preventDefault();
       if (e.dataTransfer.files) {
-        for (let i = 0; i < e.dataTransfer.files.length; i++) {
+        for (let i = 0; i < e.dataTransfer.files.length; i++){
           addImage(e.dataTransfer.files[i]);
         }
       }
     });
     document.addEventListener('paste', (e) => {
       if (e.clipboardData && e.clipboardData.items) {
-        for (let i = 0; i < e.clipboardData.items.length; i++) {
+        for (let i = 0; i < e.clipboardData.items.length; i++){
           const item = e.clipboardData.items[i];
           if (item.type.indexOf('image') !== -1) {
             const file = item.getAsFile();
@@ -173,14 +181,13 @@
       }
     });
 
-    // Slider to adjust darken parameter
+    // Slider to adjust darken parameter (using blend = min(src, dst))
     darkenSlider.addEventListener('input', (e) => {
-      darkenFactor = parseFloat(e.target.value) / 100;
       updateDarkenDisplay(e.target.value);
       imageBlocks.forEach(block => redrawImageBlock(block));
     });
 
-    // Slider to adjust blur effect
+    // Slider to adjust blur effect; blur is now applied at the very end.
     blurSlider.addEventListener('input', (e) => {
       blurAmount = parseInt(e.target.value);
       updateBlurDisplay(e.target.value);
@@ -191,17 +198,16 @@
     updateDarkenDisplay(darkenSlider.value);
     updateBlurDisplay(blurSlider.value);
 
-    // EXPORT button creates a zip file of all canvases preserving file names
+    // EXPORT button creates a zip file of all canvases preserving file names,
+    // with each exported image retaining its original dimensions.
     exportBtn.addEventListener('click', () => {
       const zip = new JSZip();
       const promises = [];
       imageBlocks.forEach((block, index) => {
         let filename = block.filename || `image${index + 1}.png`;
-        // Ensure they have a .png extension
         if (!filename.toLowerCase().endsWith('.png')) {
           filename += '.png';
         }
-        // Convert canvas to blob and add to zip.
         const promise = new Promise(resolve => {
           block.canvas.toBlob(blob => {
             zip.file(filename, blob);
