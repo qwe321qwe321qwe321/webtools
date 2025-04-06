@@ -528,7 +528,7 @@
                     const alpha = data[idx + 3];
                     
                     if (alpha >= threshold) {
-                        data[idx + 3] = Math.min(alpha, 255); // Enhance alpha
+                        data[idx + 3] = Math.min(alpha, 255);
                         minX = Math.min(minX, x);
                         minY = Math.min(minY, y);
                         maxX = Math.max(maxX, x);
@@ -545,22 +545,23 @@
                 return { canvas, minX: 0, minY: 0, contentWidth: 0, contentHeight: 0, maxDimension: 1 };
             }
 
-            const clipRightBound = (image.width - maxX);
+            const clipRightBound = (image.width - 1 - maxX);
             if (minX > clipRightBound) {
                 minX = clipRightBound;
             } else if (minX < clipRightBound){
-                maxX = image.width - minX;
+                maxX = image.width - 1 - minX;
             }
-            const clipUpperBound = (image.height - maxY);
+            const clipUpperBound = (image.height - 1 - maxY);
             if (minY > clipUpperBound) {
                 minY = clipUpperBound;
             } else if (minY < clipUpperBound){
-                maxY = image.height - minY;
+                maxY = image.height - 1 - minY;
             }
             
             // Calculate the dimensions of the non-transparent content
             let contentWidth = maxX - minX + 1;
             let contentHeight = maxY - minY + 1;
+            console.log(`width ${image.width}, height ${image.height}, minX ${minX}, maxX ${maxX}, minY ${minY}, maxY ${maxY}, Content dimensions: ${contentWidth} x ${contentHeight}`);
 
 
             // Make the output square
