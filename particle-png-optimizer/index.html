@@ -125,6 +125,19 @@
             <input type="range" id="alphaThreshold" min="0" max="255" value="10">
             <span id="thresholdValue">10</span>
         </div>
+        <div class="slider-container">
+            <label for="alphaEnhance">Alpha Enhance:</label>
+            <input type="range" id="alphaEnhance" min="0" max="255" value="0">
+            <span id="enhanceValue">0</span>
+        </div>
+        <div class="slider-container">
+            <label for="backgroundToggle">Black Background:</label>
+            <input type="checkbox" id="backgroundToggle">
+        </div>
+        <div class="slider-container">
+            <label for="centerToggle">Fixed Size Optimized Canvas:</label>
+            <input type="checkbox" id="centerToggle">
+        </div>
         <button id="downloadBtn" disabled>Download Optimized PNG</button>
     </div>
     
@@ -165,6 +178,10 @@
         const batchItems = document.getElementById('batchItems');
         const batchStatus = document.getElementById('batchStatus');
         const downloadAllBtn = document.getElementById('downloadAllBtn');
+        const alphaEnhanceSlider = document.getElementById('alphaEnhance');
+        const enhanceValueDisplay = document.getElementById('enhanceValue');
+        const backgroundToggle = document.getElementById('backgroundToggle');
+        const centerToggle = document.getElementById('centerToggle');
         
         let originalImage = null;
         let processedImages = [];
@@ -179,6 +196,33 @@
             processAllBatchImages();
         });
         
+        // Update enhance value display and reprocess images when slider changes
+        alphaEnhanceSlider.addEventListener('input', function() {
+            enhanceValueDisplay.textContent = this.value;
+            if (originalImage) {
+                processImage();
+            }
+            processAllBatchImages();
+        });
+
+        // Toggle canvas background between grid and black
+        backgroundToggle.addEventListener('change', function() {
+            const isBlack = this.checked;
+            const canvases = document.querySelectorAll('canvas');
+            canvases.forEach(canvas => {
+                if (isBlack) {
+                    canvas.style.backgroundImage = 'none';
+                    canvas.style.backgroundColor = 'black';
+                } else {
+                    canvas.style.backgroundImage = `linear-gradient(45deg, #f0f0f0 25%, transparent 25%),
+                        linear-gradient(-45deg, #f0f0f0 25%, transparent 25%),
+                        linear-gradient(45deg, transparent 75%, #f0f0f0 75%),
+                        linear-gradient(-45deg, transparent 75%, #f0f0f0 75%)`;
+                    canvas.style.backgroundColor = 'transparent';
+                }
+            });
+        });
+
         // Handle image upload
         imageInput.addEventListener('change', function(e) {
             const files = e.target.files;
@@ -407,18 +451,31 @@
             // Process the image
             const result = processImageData(originalImage, alphaThresholdSlider.value);
             
-            // Set the processed canvas
-            processedCanvas.width = result.canvas.width;
-            processedCanvas.height = result.canvas.height;
+            // Handle optimized canvas based on toggle
             const procCtx = processedCanvas.getContext('2d');
-            procCtx.clearRect(0, 0, processedCanvas.width, processedCanvas.height);
-            procCtx.drawImage(result.canvas, 0, 0);
+            if (centerToggle.checked) {
+                // Fixed size canvas with optimized image centered
+                processedCanvas.width = originalImage.width;
+                processedCanvas.height = originalImage.height;
+                procCtx.clearRect(0, 0, processedCanvas.width, processedCanvas.height);
+                const offsetX = (originalImage.width - result.canvas.width) / 2;
+                const offsetY = (originalImage.height - result.canvas.height) / 2;
+                procCtx.drawImage(result.canvas, offsetX, offsetY);
+            } else {
+                // Optimized canvas with trimmed size
+                processedCanvas.width = result.canvas.width;
+                processedCanvas.height = result.canvas.height;
+                procCtx.clearRect(0, 0, processedCanvas.width, processedCanvas.height);
+                procCtx.drawImage(result.canvas, 0, 0);
+            }
             
             // Draw center point on processed canvas
             drawCenterPoint(processedCanvas);
             
             // Display dimensions info
-            processedInfo.textContent = `${result.canvas.width} × ${result.canvas.height}px`;
+            processedInfo.textContent = centerToggle.checked
+                ? `${originalImage.width} × ${originalImage.height}px (Centered)`
+                : `${result.canvas.width} × ${result.canvas.height}px`;
         }
         
         // Function to draw a center point on a canvas
@@ -456,6 +513,7 @@
             const imageData = ctx.getImageData(0, 0, image.width, image.height);
             const data = imageData.data;
             threshold = parseInt(threshold);
+            const enhanceValue = parseInt(alphaEnhanceSlider.value);
             
             // Find the bounds of non-transparent content
             let minX = image.width;
@@ -470,6 +528,7 @@
                     const alpha = data[idx + 3];
                     
                     if (alpha >= threshold) {
+                        data[idx + 3] = Math.min(alpha, 255); // Enhance alpha
                         minX = Math.min(minX, x);
                         minY = Math.min(minY, y);
                         maxX = Math.max(maxX, x);
@@ -525,13 +584,29 @@
             resultCanvas.height = maxDimension;
             const resultCtx = resultCanvas.getContext('2d');
             resultCtx.clearRect(0, 0, maxDimension, maxDimension);
-            
+        
+
             // Draw the content centered in the square
             resultCtx.drawImage(
                 image,
                 minX, minY, contentWidth, contentHeight,
                 0, 0, contentWidth, contentHeight
             );
+
+            // Enhance alpha channels by adding enhanceValue
+            if (enhanceValue > 0) {
+                const resultImageData = resultCtx.getImageData(0, 0, contentWidth, contentHeight);
+                const resultData = resultImageData.data;
+                
+                for (let i = 3; i < resultData.length; i += 4) {
+                    if (resultData[i] >= threshold) {
+                        // Add enhanceValue to the alpha channel, clamping at 255
+                        resultData[i] = Math.min(255, resultData[i] + enhanceValue);
+                    }
+                }
+                
+                resultCtx.putImageData(resultImageData, 0, 0);
+            }
             
             return { 
                 canvas: resultCanvas,
@@ -626,6 +701,13 @@
                 // Update center points when window is resized
                 drawCenterPoint(originalCanvas);
                 drawCenterPoint(processedCanvas);
+            }
+        });
+
+        // Update processImage to handle the toggle for fixed-size optimized canvas
+        centerToggle.addEventListener('change', function() {
+            if (originalImage) {
+                processImage();
             }
         });
     </script>
