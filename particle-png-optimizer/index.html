@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PNG Transparency Optimizer for Particles</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .controls {
+            margin-bottom: 20px;
+        }
+        .canvas-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .canvas-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            background-image: linear-gradient(45deg, #f0f0f0 25%, transparent 25%),
+                linear-gradient(-45deg, #f0f0f0 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, #f0f0f0 75%),
+                linear-gradient(-45deg, transparent 75%, #f0f0f0 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+        .slider-container {
+            width: 100%;
+            max-width: 400px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        .slider-container input {
+            flex-grow: 1;
+        }
+        /* New styles for batch processing */
+        .batch-container {
+            margin-top: 30px;
+        }
+        .batch-item {
+            display: flex;
+            margin-bottom: 15px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .batch-preview {
+            display: flex;
+            gap: 10px;
+        }
+        .batch-preview canvas {
+            max-width: 100px;
+            max-height: 100px;
+            object-fit: contain;
+        }
+        .batch-info {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .batch-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .batch-status {
+            margin-top: 15px;
+            font-weight: bold;
+        }
+        .download-all-container {
+            margin-top: 20px;
+        }
+        /* Center point marker style */
+        .center-point {
+            position: absolute;
+            width: 9px;
+            height: 9px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        .center-point::before,
+        .center-point::after {
+            content: '';
+            position: absolute;
+            background-color: rgba(255, 0, 0, 0.8);
+        }
+        
+        .center-point::before {
+            top: 4px;
+            left: 0;
+            width: 9px;
+            height: 1px;
+        }
+        
+        .center-point::after {
+            left: 4px;
+            top: 0;
+            width: 1px;
+            height: 9px;
+        }
+    </style>
+</head>
+<body>
+    <h1>PNG Transparency Optimizer for Particles</h1>
+    <p>Trim transparent areas, keep all non-transparent pixels, and make the output square.</p>
+    
+    <div class="controls">
+        <input type="file" id="imageInput" accept="image/png" multiple>
+        <div class="slider-container">
+            <label for="alphaThreshold">Alpha Threshold:</label>
+            <input type="range" id="alphaThreshold" min="0" max="255" value="10">
+            <span id="thresholdValue">10</span>
+        </div>
+        <button id="downloadBtn" disabled>Download Optimized PNG</button>
+    </div>
+    
+    <div class="canvas-container">
+        <div class="canvas-wrapper">
+            <h3>Original Image</h3>
+            <canvas id="originalCanvas"></canvas>
+            <div id="originalInfo"></div>
+        </div>
+        <div class="canvas-wrapper">
+            <h3>Optimized Image</h3>
+            <canvas id="processedCanvas"></canvas>
+            <div id="processedInfo"></div>
+        </div>
+    </div>
+
+    <!-- New section for batch processing -->
+    <div class="batch-container">
+        <h2>Batch Processing</h2>
+        <div id="batchItems"></div>
+        <div class="batch-status" id="batchStatus"></div>
+        <div class="download-all-container">
+            <button id="downloadAllBtn" disabled>Download All Optimized PNGs</button>
+        </div>
+    </div>
+
+    <!-- Include JSZip library for downloading multiple files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script>
+        const imageInput = document.getElementById('imageInput');
+        const alphaThresholdSlider = document.getElementById('alphaThreshold');
+        const thresholdValueDisplay = document.getElementById('thresholdValue');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const originalCanvas = document.getElementById('originalCanvas');
+        const processedCanvas = document.getElementById('processedCanvas');
+        const originalInfo = document.getElementById('originalInfo');
+        const processedInfo = document.getElementById('processedInfo');
+        const batchItems = document.getElementById('batchItems');
+        const batchStatus = document.getElementById('batchStatus');
+        const downloadAllBtn = document.getElementById('downloadAllBtn');
+        
+        let originalImage = null;
+        let processedImages = [];
+        
+        // Update threshold value display when slider changes
+        alphaThresholdSlider.addEventListener('input', function() {
+            thresholdValueDisplay.textContent = this.value;
+            if (originalImage) {
+                processImage();
+            }
+            // Reprocess all batch images
+            processAllBatchImages();
+        });
+        
+        // Handle image upload
+        imageInput.addEventListener('change', function(e) {
+            const files = e.target.files;
+            if (!files || files.length === 0) return;
+            
+            // Clear existing batch items if this is a new selection
+            if (files.length > 1) {
+                batchItems.innerHTML = '';
+                processedImages = [];
+            }
+            
+            // Show the first image in the main preview
+            if (files[0] && files[0].type.match('image/png')) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    originalImage = new Image();
+                    originalImage.onload = function() {
+                        processImage();
+                        downloadBtn.disabled = false;
+                    };
+                    originalImage.src = event.target.result;
+                };
+                reader.readAsDataURL(files[0]);
+            }
+            
+            // Process all files for the batch view
+            processFileBatch(files);
+        });
+        
+        // Process batch of files
+        function processFileBatch(files) {
+            batchStatus.textContent = `Processing ${files.length} files...`;
+            
+            let processedCount = 0;
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                
+                if (!file.type.match('image/png')) {
+                    processedCount++;
+                    updateBatchStatus(processedCount, files.length);
+                    continue;
+                }
+                
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const img = new Image();
+                    img.onload = function() {
+                        // Process this image
+                        const result = processImageData(img, alphaThresholdSlider.value);
+                        
+                        // Create batch item element
+                        const batchItem = document.createElement('div');
+                        batchItem.className = 'batch-item';
+                        batchItem.innerHTML = `
+                            <div class="batch-preview">
+                                <canvas class="original-preview"></canvas>
+                                <canvas class="processed-preview"></canvas>
+                            </div>
+                            <div class="batch-info">
+                                <div>${file.name}</div>
+                                <div>Original: ${img.width} × ${img.height}px</div>
+                                <div>Optimized: ${result.canvas.width} × ${result.canvas.height}px</div>
+                            </div>
+                            <div class="batch-actions">
+                                <button class="download-item-btn">Download</button>
+                            </div>
+                        `;
+                        batchItems.appendChild(batchItem);
+                        
+                        // Draw original preview
+                        const originalPreview = batchItem.querySelector('.original-preview');
+                        originalPreview.width = 100;
+                        originalPreview.height = 100;
+                        const originalCtx = originalPreview.getContext('2d');
+                        drawImageProp(originalCtx, img, 0, 0, 100, 100);
+                        
+                        // Draw processed preview
+                        const processedPreview = batchItem.querySelector('.processed-preview');
+                        processedPreview.width = 100;
+                        processedPreview.height = 100;
+                        const processedCtx = processedPreview.getContext('2d');
+                        drawImageProp(processedCtx, result.canvas, 0, 0, 100, 100);
+                        
+                        // Set up download button
+                        const downloadBtn = batchItem.querySelector('.download-item-btn');
+                        downloadBtn.addEventListener('click', function() {
+                            const link = document.createElement('a');
+                            link.download = `${file.name}`;
+                            link.href = result.canvas.toDataURL('image/png');
+                            link.click();
+                        });
+                        
+                        // Save the processed image data
+                        processedImages.push({
+                            fileName: file.name,
+                            canvas: result.canvas
+                        });
+                        
+                        // Update processed count
+                        processedCount++;
+                        updateBatchStatus(processedCount, files.length);
+                        
+                        // Enable download all button if we have processed images
+                        if (processedImages.length > 0) {
+                            downloadAllBtn.disabled = false;
+                        }
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+        
+        // Update batch status
+        function updateBatchStatus(processedCount, totalCount) {
+            if (processedCount === totalCount) {
+                batchStatus.textContent = `All ${totalCount} files processed`;
+            } else {
+                batchStatus.textContent = `Processing ${processedCount}/${totalCount} files...`;
+            }
+        }
+        
+        // Process all batch images with current threshold
+        function processAllBatchImages() {
+            // Get current threshold
+            const threshold = parseInt(alphaThresholdSlider.value);
+            
+            // Clear batch items
+            batchItems.innerHTML = '';
+            
+            // If we don't have any processed images, nothing to do
+            if (processedImages.length === 0) return;
+            
+            batchStatus.textContent = `Reprocessing ${processedImages.length} files...`;
+            
+            // Get all original images from processedImages
+            let processedCount = 0;
+            for (let i = 0; i < processedImages.length; i++) {
+                const item = processedImages[i];
+                const img = new Image();
+                img.onload = function() {
+                    // Process this image with new threshold
+                    const result = processImageData(img, threshold);
+                    
+                    // Update canvas in processedImages
+                    processedImages[i].canvas = result.canvas;
+                    
+                    // Create batch item element (same as in processFileBatch)
+                    const batchItem = document.createElement('div');
+                    batchItem.className = 'batch-item';
+                    batchItem.innerHTML = `
+                        <div class="batch-preview">
+                            <canvas class="original-preview"></canvas>
+                            <canvas class="processed-preview"></canvas>
+                        </div>
+                        <div class="batch-info">
+                            <div>${item.fileName}</div>
+                            <div>Original: ${img.width} × ${img.height}px</div>
+                            <div>Optimized: ${result.canvas.width} × ${result.canvas.height}px</div>
+                        </div>
+                        <div class="batch-actions">
+                            <button class="download-item-btn">Download</button>
+                        </div>
+                    `;
+                    batchItems.appendChild(batchItem);
+                    
+                    // Draw original preview
+                    const originalPreview = batchItem.querySelector('.original-preview');
+                    originalPreview.width = 100;
+                    originalPreview.height = 100;
+                    const originalCtx = originalPreview.getContext('2d');
+                    drawImageProp(originalCtx, img, 0, 0, 100, 100);
+                    
+                    // Draw processed preview
+                    const processedPreview = batchItem.querySelector('.processed-preview');
+                    processedPreview.width = 100;
+                    processedPreview.height = 100;
+                    const processedCtx = processedPreview.getContext('2d');
+                    drawImageProp(processedCtx, result.canvas, 0, 0, 100, 100);
+                    
+                    // Set up download button
+                    const downloadBtn = batchItem.querySelector('.download-item-btn');
+                    downloadBtn.addEventListener('click', function() {
+                        const link = document.createElement('a');
+                        link.download = `${item.fileName}`;
+                        link.href = result.canvas.toDataURL('image/png');
+                        link.click();
+                    });
+                    
+                    // Update processed count
+                    processedCount++;
+                    if (processedCount === processedImages.length) {
+                        batchStatus.textContent = `All ${processedCount} files processed`;
+                    }
+                };
+                img.src = processedImages[i].originalDataURL || '';
+                
+                // If we don't have the original image data, create it
+                if (!processedImages[i].originalDataURL) {
+                    const tempCanvas = document.createElement('canvas');
+                    const tempCtx = tempCanvas.getContext('2d');
+                    tempCanvas.width = img.width;
+                    tempCanvas.height = img.height;
+                    tempCtx.drawImage(img, 0, 0);
+                    processedImages[i].originalDataURL = tempCanvas.toDataURL('image/png');
+                }
+            }
+        }
+        
+        // Process image with current threshold
+        function processImage() {
+            if (!originalImage) return;
+            
+            // Display original image
+            const origCtx = originalCanvas.getContext('2d');
+            originalCanvas.width = originalImage.width;
+            originalCanvas.height = originalImage.height;
+            origCtx.clearRect(0, 0, originalCanvas.width, originalCanvas.height);
+            origCtx.drawImage(originalImage, 0, 0);
+            originalInfo.textContent = `${originalImage.width} × ${originalImage.height}px`;
+            
+            // Draw center point on original canvas
+            drawCenterPoint(originalCanvas);
+            
+            // Process the image
+            const result = processImageData(originalImage, alphaThresholdSlider.value);
+            
+            // Set the processed canvas
+            processedCanvas.width = result.canvas.width;
+            processedCanvas.height = result.canvas.height;
+            const procCtx = processedCanvas.getContext('2d');
+            procCtx.clearRect(0, 0, processedCanvas.width, processedCanvas.height);
+            procCtx.drawImage(result.canvas, 0, 0);
+            
+            // Draw center point on processed canvas
+            drawCenterPoint(processedCanvas);
+            
+            // Display dimensions info
+            processedInfo.textContent = `${result.canvas.width} × ${result.canvas.height}px`;
+        }
+        
+        // Function to draw a center point on a canvas
+        function drawCenterPoint(canvas) {
+            // Get canvas parent element
+            const parentElement = canvas.parentElement;
+            
+            // Remove any existing center point
+            const existingPoint = parentElement.querySelector('.center-point');
+            if (existingPoint) {
+                existingPoint.remove();
+            }
+            
+            // Create center point element
+            const centerPoint = document.createElement('div');
+            centerPoint.className = 'center-point';
+            
+            // Position the center point in the middle of the canvas
+            centerPoint.style.left = (canvas.offsetLeft + canvas.width / 2 - 4) + 'px';
+            centerPoint.style.top = (canvas.offsetTop + canvas.height / 2 - 4) + 'px';
+            
+            // Add the center point to the canvas wrapper
+            parentElement.appendChild(centerPoint);
+        }
+        
+        // Process image data with given threshold
+        function processImageData(image, threshold) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = image.width;
+            canvas.height = image.height;
+            ctx.drawImage(image, 0, 0);
+            
+            // Get image data to analyze transparency
+            const imageData = ctx.getImageData(0, 0, image.width, image.height);
+            const data = imageData.data;
+            threshold = parseInt(threshold);
+            
+            // Find the bounds of non-transparent content
+            let minX = image.width;
+            let minY = image.height;
+            let maxX = 0;
+            let maxY = 0;
+            let hasVisiblePixel = false;
+            
+            for (let y = 0; y < image.height; y++) {
+                for (let x = 0; x < image.width; x++) {
+                    const idx = (y * image.width + x) * 4;
+                    const alpha = data[idx + 3];
+                    
+                    if (alpha >= threshold) {
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        maxX = Math.max(maxX, x);
+                        maxY = Math.max(maxY, y);
+                        hasVisiblePixel = true;
+                    }
+                }
+            }
+            
+            // If the image is completely transparent, return a 1x1 canvas
+            if (!hasVisiblePixel) {
+                canvas.width = 1;
+                canvas.height = 1;
+                return { canvas, minX: 0, minY: 0, contentWidth: 0, contentHeight: 0, maxDimension: 1 };
+            }
+
+            const clipRightBound = (image.width - maxX);
+            if (minX > clipRightBound) {
+                minX = clipRightBound;
+            } else if (minX < clipRightBound){
+                maxX = image.width - minX;
+            }
+            const clipUpperBound = (image.height - maxY);
+            if (minY > clipUpperBound) {
+                minY = clipUpperBound;
+            } else if (minY < clipUpperBound){
+                maxY = image.height - minY;
+            }
+            
+            // Calculate the dimensions of the non-transparent content
+            let contentWidth = maxX - minX + 1;
+            let contentHeight = maxY - minY + 1;
+
+
+            // Make the output square
+            if (contentWidth > contentHeight) {
+                const diff = (contentWidth - contentHeight) / 2;
+                minY -= diff;
+                maxY += diff;
+                contentHeight = contentWidth;
+            } else if (contentWidth < contentHeight) {
+                const diff = (contentHeight - contentWidth) / 2;
+                minX -= diff;
+                maxX += diff;
+                contentWidth = contentHeight;
+            }
+            
+            const maxDimension = contentWidth;
+                        
+            // Create the processed canvas
+            const resultCanvas = document.createElement('canvas');
+            resultCanvas.width = maxDimension;
+            resultCanvas.height = maxDimension;
+            const resultCtx = resultCanvas.getContext('2d');
+            resultCtx.clearRect(0, 0, maxDimension, maxDimension);
+            
+            // Draw the content centered in the square
+            resultCtx.drawImage(
+                image,
+                minX, minY, contentWidth, contentHeight,
+                0, 0, contentWidth, contentHeight
+            );
+            
+            return { 
+                canvas: resultCanvas,
+                minX, 
+                minY, 
+                contentWidth, 
+                contentHeight,
+                maxDimension
+            };
+        }
+        
+        // Helper function to draw the image properly constrained in a container
+        function drawImageProp(ctx, img, x, y, w, h) {
+            const sourceWidth = img.width;
+            const sourceHeight = img.height;
+            const ratio = Math.min(w / sourceWidth, h / sourceHeight);
+            const newWidth = sourceWidth * ratio;
+            const newHeight = sourceHeight * ratio;
+            const offsetX = (w - newWidth) / 2;
+            const offsetY = (h - newHeight) / 2;
+            
+            ctx.drawImage(img, 0, 0, sourceWidth, sourceHeight, 
+                          x + offsetX, y + offsetY, newWidth, newHeight);
+            
+            // Draw center point on the canvas
+            const canvas = ctx.canvas;
+            if (canvas.classList.contains('original-preview') || canvas.classList.contains('processed-preview')) {
+                // For batch preview images, draw a simple center crosshair
+                ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
+                ctx.lineWidth = 1;
+                
+                // Horizontal line
+                ctx.beginPath();
+                ctx.moveTo(w/2 - 4, h/2);
+                ctx.lineTo(w/2 + 4, h/2);
+                ctx.stroke();
+                
+                // Vertical line
+                ctx.beginPath();
+                ctx.moveTo(w/2, h/2 - 4);
+                ctx.lineTo(w/2, h/2 + 4);
+                ctx.stroke();
+            }
+        }
+        
+        // Handle single image download
+        downloadBtn.addEventListener('click', function() {
+            if (processedCanvas.width === 0 || processedCanvas.height === 0) return;
+            
+            const link = document.createElement('a');
+            link.download = 'image.png';
+            link.href = processedCanvas.toDataURL('image/png');
+            link.click();
+        });
+        
+        // Handle download all button
+        downloadAllBtn.addEventListener('click', async function() {
+            if (processedImages.length === 0) return;
+            
+            // Create a new JSZip instance
+            const zip = new JSZip();
+            
+            // Add all processed images to the zip
+            processedImages.forEach(item => {
+                // Convert canvas to blob
+                const dataURL = item.canvas.toDataURL('image/png');
+                const base64 = dataURL.split(',')[1];
+                zip.file(`${item.fileName}`, base64, {base64: true});
+            });
+            
+            // Generate the zip file
+            batchStatus.textContent = 'Preparing ZIP file...';
+            const content = await zip.generateAsync({type: 'blob'});
+            
+            // Create download link and trigger download
+            const link = document.createElement('a');
+            link.download = 'optimized-pngs.zip';
+            link.href = URL.createObjectURL(content);
+            link.click();
+            
+            batchStatus.textContent = `ZIP file containing ${processedImages.length} images created`;
+            
+            // Clean up
+            setTimeout(() => {
+                URL.revokeObjectURL(link.href);
+            }, 100);
+        });
+        
+        // Add function to update center points on window resize
+        window.addEventListener('resize', function() {
+            if (originalImage) {
+                // Update center points when window is resized
+                drawCenterPoint(originalCanvas);
+                drawCenterPoint(processedCanvas);
+            }
+        });
+    </script>
+</body>
+</html>
